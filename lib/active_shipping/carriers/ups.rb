@@ -316,16 +316,16 @@ module ActiveShipping
             # not implemented: Shipment/Description element
             "Shipper" => build_location_node('Shipper', (options[:shipper] || origin), options),
             "ShipTo" => build_location_node('ShipTo', destination, options),
-            "ShipFrom" => build_location_node('ShipFrom', destination, options),
+            "ShipFrom" => build_location_node('ShipFrom', origin, options),
             "NumOfPieces" => packages.count,
             "PaymentDetails": {
-            "ShipmentCharge": {
-              "Type": "01",
-              "BillShipper": {
-                "AccountNumber": options[:origin_account]
+              "ShipmentCharge": {
+                "Type": "01",
+                "BillShipper": {
+                  "AccountNumber": options[:origin_account]
+                }
               }
-            }
-          },
+            },
           "Service": {
             "Code": "03",
             "Description": "Ground"
@@ -1251,7 +1251,8 @@ module ActiveShipping
     end
 
     def get_access_token
-      url = "https://wwwcie.ups.com/security/v1/oauth/token"
+      test = @options[:test]
+      url = "#{test ? TEST_URL : LIVE_URL}/security/v1/oauth/token"
       request = "grant_type=client_credentials"
       headers = authorization_credentails_header
       response = ssl_post(url, request, headers)
