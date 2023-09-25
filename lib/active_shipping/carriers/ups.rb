@@ -7,11 +7,11 @@ module ActiveShipping
     cattr_reader :name
     @@name = "UPS"
 
-    TEST_URL = 'https://wwwcie.ups.com/api'
+    TEST_URL = 'https://wwwcie.ups.com'
     LIVE_URL = 'https://onlinetools.ups.com'
 
     RESOURCES = {
-      :rates => 'rating/v1/Rate',
+      :rates => 'api/rating/v1/Rate',
       :track => 'ups.app/xml/Track',
       :ship_confirm => 'ups.app/xml/ShipConfirm',
       :ship_accept => 'ups.app/xml/ShipAccept',
@@ -52,7 +52,7 @@ module ActiveShipping
       "01" => "UPS Next Day Air",
       "02" => "UPS Second Day Air",
       "03" => "UPS Ground",
-      "07" => "UPS Worldwide Express",
+      "07" => "UPS Express",
       "08" => "UPS Worldwide Expedited",
       "11" => "UPS Standard",
       "12" => "UPS Three-Day Select",
@@ -158,7 +158,7 @@ module ActiveShipping
       packages = Array(packages)
       rate_request = build_rate_request(origin, destination, packages, options)
       response = commit(:rates, rate_request, (options[:test] || false))
-      
+
       return parse_rate_response(origin, destination, packages, response, options)
     end
 
@@ -327,8 +327,8 @@ module ActiveShipping
               }
             },
           "Service": {
-            "Code": "03",
-            "Description": "Ground"
+            "Code": DEFAULT_SERVICES.key(options[:service_name]) ,
+            "Description": options[:service_name]
           },
             "Package" => build_package_node(packages.first, options)
             
@@ -841,7 +841,6 @@ module ActiveShipping
     end
 
     def parse_rate_response(origin, destination, packages, response, options={})
-      # xml = build_document(response, 'RatingServiceSelectionResponse')
       parsed_response = JSON.parse(response)
       success = response_success?(parsed_response)
       message = response_message(parsed_response)
@@ -852,7 +851,6 @@ module ActiveShipping
           negotiated_rate = rated_shipments.dig('NegotiatedRates', 'NetSummaryCharges', 'GrandTotal', 'MonetaryValue') || rated_shipments.dig('TotalCharges', 'MonetaryValue')
           total_price     = negotiated_rate.to_f
           currency        = rated_shipments.dig('TotalCharges', 'CurrencyCode')
-
           ::ActiveShipping::RateEstimate.new(origin, destination, ::ActiveShipping::UPS.name,
               service_name_for(origin, service_code),
               total_price: total_price,
@@ -1236,7 +1234,6 @@ module ActiveShipping
 
     def encoded_authorization
       expiration_timestamp = Spree::ActiveShipping::Config[:ups_token_expiry]
-      
       if token_expired?(expiration_timestamp)
         get_access_token
       end
