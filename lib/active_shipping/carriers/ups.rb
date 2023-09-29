@@ -755,7 +755,7 @@ module ActiveShipping
         "StateProvinceCode" => location.state,
         "PostalCode" => location.postal_code,
         "CountryCode" => location.country_code(:alpha2),
-        "ResidentialAddressIndicator" => location.commercial? ? "false" : "true"
+        "ResidentialAddressIndicator" => location.commercial? ? false : true
       }
 
       location_node
@@ -844,22 +844,45 @@ module ActiveShipping
       parsed_response = JSON.parse(response)
       success = response_success?(parsed_response)
       message = response_message(parsed_response)
+
       if success
+        missing_json_field = false
         rated_shipments = parsed_response.dig('RateResponse', 'RatedShipment')
         rate_estimates = rated_shipments.map do |rated_shipment|
-          service_code = rated_shipment[1]['Code']
-          negotiated_rate = rated_shipments.dig('NegotiatedRates', 'NetSummaryCharges', 'GrandTotal', 'MonetaryValue') || rated_shipments.dig('TotalCharges', 'MonetaryValue')
-          total_price     = negotiated_rate.to_f
-          currency        = rated_shipments.dig('TotalCharges', 'CurrencyCode')
-          ::ActiveShipping::RateEstimate.new(origin, destination, ::ActiveShipping::UPS.name,
-              service_name_for(origin, service_code),
-              total_price: total_price,
-              currency: currency,
-              service_code: service_code,
-              packages: packages
-            )
+          begin
+            service_code = rated_shipment[1]['Code']
+            # negotiated_rate     = rated_shipments.dig('NegotiatedRateCharges', 'TotalCharge', 'MonetaryValue')
+            # negotiated_currency = rated_shipments.dig('NegotiatedRateCharges', 'TotalCharge', 'CurrencyCode')
+            total_price     = rated_shipments.dig('TotalCharges', 'MonetaryValue').to_f
+            currency        = rated_shipments.dig('TotalCharges', 'CurrencyCode')
+            ::ActiveShipping::RateEstimate.new(origin, destination, ::ActiveShipping::UPS.name,
+                service_name_for(origin, service_code),
+                total_price: total_price,
+                currency: currency,
+                service_code: service_code,
+                packages: packages)
+          rescue NoMethodError
+            missing_json_field = true
+            nil
+          end
         end
+
+        rate_estimates = rate_estimates.compact
+        logger.warn("[UPSParseRateError] Some fields where missing in the response: #{response}") if logger && missing_json_field
+
+        if rate_estimates.empty?
+          success = false
+          if missing_json_field
+            message = "The response from the carrier contained errors and could not be treated"
+          else
+            message = "No shipping rates could be found for the destination address" if message.blank?
+          end
+        end
+
+      else
+        rate_estimates = []
       end
+
       ::ActiveShipping::RateResponse.new(success, message, parsed_response, rates: rate_estimates, xml: response, request: last_request)
     end
 
