@@ -11,7 +11,8 @@ module ActiveShipping
     LIVE_URL = 'https://onlinetools.ups.com'
 
     RESOURCES = {
-      :rates => 'api/rating/v1/Rate',
+      :rate => 'api/rating/v1/Rate',
+      :rates => 'api/rating/v1/Shop',
       :track => 'ups.app/xml/Track',
       :ship_confirm => 'ups.app/xml/ShipConfirm',
       :ship_accept => 'ups.app/xml/ShipAccept',
@@ -154,12 +155,27 @@ module ActiveShipping
 
     def find_rates(origin, destination, packages, options={})
       origin, destination = upsified_location(origin), upsified_location(destination)
-      options = @options.merge(options)
       packages = Array(packages)
+
+      # Explicit SurePost request
+      total_weight = packages.sum { |p| p.lbs }
+
+      if total_weight < 1.0
+        surepost_options = @options.merge(options).merge(service_code: "92")
+        surepost_rate_request = build_rate_request(origin, destination, packages, surepost_options)
+        surepost_response = commit(:rate, surepost_rate_request, (options[:test] || false))
+      else
+        surepost_options = @options.merge(options).merge(service_code: "93")
+        surepost_rate_request = build_rate_request(origin, destination, packages, surepost_options)
+        surepost_response = commit(:rate, surepost_rate_request, (options[:test] || false))
+      end
+
+      # Requests all rates using requestoption = Shop (Does not return SurePost)
+      options = @options.merge(options)
       rate_request = build_rate_request(origin, destination, packages, options)
       response = commit(:rates, rate_request, (options[:test] || false))
 
-      return parse_rate_response(origin, destination, packages, response, options)
+      return parse_rate_response(origin, destination, packages, surepost_response, response, surepost_options, options)
     end
 
     # Retrieves tracking information for a previous shipment
@@ -304,37 +320,26 @@ module ActiveShipping
               "CustomerContext" => "CustomerContext"
             }
           },
-          "PickupType" => {
-            "Code" => ::ActiveShipping::UPS::PICKUP_CODES[options[:pickup_type] || :daily_pickup]
-            # not implemented: PickupType/PickupDetails element
-          },
-          "CustomerClassification" => {
-            "Code" => ::ActiveShipping::UPS::CUSTOMER_CLASSIFICATIONS[options[:customer_classification] || ::ActiveShipping::UPS::DEFAULT_CUSTOMER_CLASSIFICATIONS[options[:pickup_type] || :daily_pickup]]
-          },
           "Shipment" => {
-
-            # not implemented: Shipment/Description element
             "Shipper" => build_location_node('Shipper', (options[:shipper] || origin), options),
             "ShipTo" => build_location_node('ShipTo', destination, options),
             "ShipFrom" => build_location_node('ShipFrom', origin, options),
+            "ShipmentRatingOptions": {
+              "NegotiatedRatesIndicator": "Y",
+              "TPFCNegotiatedRatesIndicator": "Y"
+              },
             "NumOfPieces" => packages.count,
-            "PaymentDetails": {
-              "ShipmentCharge": {
-                "Type": "01",
-                "BillShipper": {
-                  "AccountNumber": options[:origin_account]
-                }
-              }
-            },
-          "Service": {
-            "Code": DEFAULT_SERVICES.key(options[:service_name]) ,
-            "Description": options[:service_name]
-          },
             "Package" => build_package_node(packages.first, options)
-            
           }
         }
       }
+      
+      if options[:service_code]
+        rate_request["RateRequest"]["Shipment"]["Service"] = {
+          "Code": options[:service_code],
+          "Description": DEFAULT_SERVICES[options[:service_code]]
+        }
+      end
 
       # Convert the hash to a JSON string
       json_request = rate_request.to_json
@@ -754,8 +759,7 @@ module ActiveShipping
         "City" => location.city,
         "StateProvinceCode" => location.state,
         "PostalCode" => location.postal_code,
-        "CountryCode" => location.country_code(:alpha2),
-        "ResidentialAddressIndicator" => location.commercial? ? false : true
+        "CountryCode" => location.country_code(:alpha2)
       }
 
       location_node
@@ -774,6 +778,8 @@ module ActiveShipping
     end
 
     def build_package_node(package, options = {})
+      options[package.options[:units]] = true
+
       package_node = {
         "PackagingType" => {
           "Code" => "02",
@@ -781,27 +787,29 @@ module ActiveShipping
         },
         "Dimensions" => {
           "UnitOfMeasurement" => {
-            "Code" => 'IN'
+            "Code" => options[:imperial] ? 'IN' : 'CM'
           },
-          "Length" => ((options[:imperial] ? package.inches(:length).to_s : (package.cm(:length)).to_f * 1000).round / 1000.0).to_s,
-          "Width" => ((options[:imperial] ? package.inches(:width).to_s : (package.cm(:width)).to_f * 1000).round / 1000.0).to_s,
-          "Height" => ((options[:imperial] ? package.inches(:height).to_s : (package.cm(:height)).to_f * 1000).round / 1000.0).to_s
+          "Length" => ((options[:imperial] ? package.inches(:length).to_f : (package.cm(:length)).to_f * 1000).round / 1000.0).to_s,
+          "Width" => ((options[:imperial] ? package.inches(:width).to_f : (package.cm(:width)).to_f * 1000).round / 1000.0).to_s,
+          "Height" => ((options[:imperial] ? package.inches(:height).to_f : (package.cm(:height)).to_f * 1000).round / 1000.0).to_s
         }
       }
 
       if (options[:service] || options[:service_code]) == DEFAULT_SERVICE_NAME_TO_CODE["UPS SurePost (USPS) < 1lb"]
         # SurePost < 1lb uses OZS, not LBS
         code = options[:imperial] ? 'OZS' : 'KGS'
+        code_description = options[:imperial] ? 'Ounces' : 'Kilograms'
         weight = options[:imperial] ? package.oz : package.kgs
       else
         code = options[:imperial] ? 'LBS' : 'KGS'
+        code_description = options[:imperial] ? 'Pounds' : 'Kilograms'
         weight = options[:imperial] ? package.lbs : package.kgs
       end
 
       package_node["PackageWeight"] = {
         "UnitOfMeasurement" => {
-          "Code": 'LBS' ,
-          "Description": "Pounds"
+          "Code": code ,
+          "Description": code_description
         },
         "Weight" => weight.to_s
       }
@@ -840,7 +848,49 @@ module ActiveShipping
       raise ActiveShipping::ResponseContentError.new(e, xml)
     end
 
-    def parse_rate_response(origin, destination, packages, response, options={})
+    def parse_rate_response(origin, destination, packages, surepost_response, response, surepost_options={}, options={})
+      # Parse SurePost rate
+      surepost_parsed_response = JSON.parse(surepost_response)
+      surepost_success = response_success?(surepost_parsed_response)
+      surepost_message = response_message(surepost_parsed_response)
+
+      if surepost_success
+        missing_json_field = false
+        rated_shipment = surepost_parsed_response.dig('RateResponse', 'RatedShipment')
+
+        begin
+          service_code = rated_shipment.dig('Service', 'Code')
+          # negotiated_rate     = rated_shipments.dig('NegotiatedRateCharges', 'TotalCharge', 'MonetaryValue')
+          # negotiated_currency = rated_shipments.dig('NegotiatedRateCharges', 'TotalCharge', 'CurrencyCode')
+          total_price     = rated_shipment.dig('TotalCharges', 'MonetaryValue').to_f
+          currency        = rated_shipment.dig('TotalCharges', 'CurrencyCode')
+          surepost_rate_estimate = ::ActiveShipping::RateEstimate.new(origin, destination, ::ActiveShipping::UPS.name,
+              service_name_for(origin, service_code),
+              total_price: total_price,
+              currency: currency,
+              service_code: service_code,
+              packages: packages)
+        rescue NoMethodError
+          missing_json_field = true
+          surepost_rate_estimate = nil
+        end
+
+        logger.warn("[UPSParseRateError SurePost] Some fields where missing in the response: #{surepost_response}") if logger && missing_json_field
+
+        if surepost_rate_estimate.nil?
+          surepost_success = false
+          if missing_json_field
+            surepost_message = "SurePost: The response from the carrier contained errors and could not be treated"
+          else
+            surepost_message = "SurePost: No shipping rates could be found for the destination address" if surepost_message.blank?
+          end
+        end
+
+      else
+        surepost_rate_estimate = nil
+      end
+
+      # Parse all rates using requestoption = Shop (Does not return SurePost)
       parsed_response = JSON.parse(response)
       success = response_success?(parsed_response)
       message = response_message(parsed_response)
@@ -850,11 +900,11 @@ module ActiveShipping
         rated_shipments = parsed_response.dig('RateResponse', 'RatedShipment')
         rate_estimates = rated_shipments.map do |rated_shipment|
           begin
-            service_code = rated_shipment[1]['Code']
+            service_code = rated_shipment.dig('Service', 'Code')
             # negotiated_rate     = rated_shipments.dig('NegotiatedRateCharges', 'TotalCharge', 'MonetaryValue')
             # negotiated_currency = rated_shipments.dig('NegotiatedRateCharges', 'TotalCharge', 'CurrencyCode')
-            total_price     = rated_shipments.dig('TotalCharges', 'MonetaryValue').to_f
-            currency        = rated_shipments.dig('TotalCharges', 'CurrencyCode')
+            total_price     = rated_shipment.dig('TotalCharges', 'MonetaryValue').to_f
+            currency        = rated_shipment.dig('TotalCharges', 'CurrencyCode')
             ::ActiveShipping::RateEstimate.new(origin, destination, ::ActiveShipping::UPS.name,
                 service_name_for(origin, service_code),
                 total_price: total_price,
@@ -883,6 +933,9 @@ module ActiveShipping
         rate_estimates = []
       end
 
+      rate_estimates = rate_estimates << surepost_rate_estimate if surepost_rate_estimate
+
+      # [TODO: DTL - Surepost response is not returned below]
       ::ActiveShipping::RateResponse.new(success, message, parsed_response, rates: rate_estimates, xml: response, request: last_request)
     end
 
@@ -1250,8 +1303,6 @@ module ActiveShipping
       headers = {
         'Authorization'   => encoded_authorization,
         'Content-Type' => 'application/json',
-        'version' => 'v1',
-        'requestoption' => 'Rate',
       }
     end
 
