@@ -164,10 +164,12 @@ module ActiveShipping
         surepost_options = @options.merge(options).merge(service_code: "92")
         surepost_rate_request = build_rate_request(origin, destination, packages, surepost_options)
         surepost_response = commit(:rate, surepost_rate_request, (options[:test] || false))
-      else
+      elsif total_weight <= 70.0
         surepost_options = @options.merge(options).merge(service_code: "93")
         surepost_rate_request = build_rate_request(origin, destination, packages, surepost_options)
         surepost_response = commit(:rate, surepost_rate_request, (options[:test] || false))
+      else
+        surepost_response = surepost_options =nil
       end
 
       # Requests all rates using requestoption = Shop (Does not return SurePost)
@@ -850,42 +852,46 @@ module ActiveShipping
 
     def parse_rate_response(origin, destination, packages, surepost_response, response, surepost_options={}, options={})
       # Parse SurePost rate
-      surepost_parsed_response = JSON.parse(surepost_response)
-      surepost_success = response_success?(surepost_parsed_response)
-      surepost_message = response_message(surepost_parsed_response)
+      if surepost_response
+        surepost_parsed_response = JSON.parse(surepost_response)
+        surepost_success = response_success?(surepost_parsed_response)
+        surepost_message = response_message(surepost_parsed_response)
 
-      if surepost_success
-        missing_json_field = false
-        rated_shipment = surepost_parsed_response.dig('RateResponse', 'RatedShipment')
+        if surepost_success
+          missing_json_field = false
+          rated_shipment = surepost_parsed_response.dig('RateResponse', 'RatedShipment')
 
-        begin
-          service_code = rated_shipment.dig('Service', 'Code')
-          # negotiated_rate     = rated_shipments.dig('NegotiatedRateCharges', 'TotalCharge', 'MonetaryValue')
-          # negotiated_currency = rated_shipments.dig('NegotiatedRateCharges', 'TotalCharge', 'CurrencyCode')
-          total_price     = rated_shipment.dig('TotalCharges', 'MonetaryValue').to_f
-          currency        = rated_shipment.dig('TotalCharges', 'CurrencyCode')
-          surepost_rate_estimate = ::ActiveShipping::RateEstimate.new(origin, destination, ::ActiveShipping::UPS.name,
-              service_name_for(origin, service_code),
-              total_price: total_price,
-              currency: currency,
-              service_code: service_code,
-              packages: packages)
-        rescue NoMethodError
-          missing_json_field = true
+          begin
+            service_code = rated_shipment.dig('Service', 'Code')
+            # negotiated_rate     = rated_shipments.dig('NegotiatedRateCharges', 'TotalCharge', 'MonetaryValue')
+            # negotiated_currency = rated_shipments.dig('NegotiatedRateCharges', 'TotalCharge', 'CurrencyCode')
+            total_price     = rated_shipment.dig('TotalCharges', 'MonetaryValue').to_f
+            currency        = rated_shipment.dig('TotalCharges', 'CurrencyCode')
+            surepost_rate_estimate = ::ActiveShipping::RateEstimate.new(origin, destination, ::ActiveShipping::UPS.name,
+                service_name_for(origin, service_code),
+                total_price: total_price,
+                currency: currency,
+                service_code: service_code,
+                packages: packages)
+          rescue NoMethodError
+            missing_json_field = true
+            surepost_rate_estimate = nil
+          end
+
+          logger.warn("[UPSParseRateError SurePost] Some fields where missing in the response: #{surepost_response}") if logger && missing_json_field
+
+          if surepost_rate_estimate.nil?
+            surepost_success = false
+            if missing_json_field
+              surepost_message = "SurePost: The response from the carrier contained errors and could not be treated"
+            else
+              surepost_message = "SurePost: No shipping rates could be found for the destination address" if surepost_message.blank?
+            end
+          end
+
+        else
           surepost_rate_estimate = nil
         end
-
-        logger.warn("[UPSParseRateError SurePost] Some fields where missing in the response: #{surepost_response}") if logger && missing_json_field
-
-        if surepost_rate_estimate.nil?
-          surepost_success = false
-          if missing_json_field
-            surepost_message = "SurePost: The response from the carrier contained errors and could not be treated"
-          else
-            surepost_message = "SurePost: No shipping rates could be found for the destination address" if surepost_message.blank?
-          end
-        end
-
       else
         surepost_rate_estimate = nil
       end
