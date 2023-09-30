@@ -160,11 +160,12 @@ module ActiveShipping
       # Explicit SurePost request
       total_weight = packages.sum { |p| p.lbs }
 
-      if total_weight < 1.0
+      is_US = destination.country_code == 'US'
+      if is_US && total_weight < 1.0
         surepost_options = @options.merge(options).merge(service_code: "92")
         surepost_rate_request = build_rate_request(origin, destination, packages, surepost_options)
         surepost_response = commit(:rate, surepost_rate_request, (options[:test] || false))
-      elsif total_weight <= 70.0
+      elsif is_US && total_weight <= 70.0
         surepost_options = @options.merge(options).merge(service_code: "93")
         surepost_rate_request = build_rate_request(origin, destination, packages, surepost_options)
         surepost_response = commit(:rate, surepost_rate_request, (options[:test] || false))
