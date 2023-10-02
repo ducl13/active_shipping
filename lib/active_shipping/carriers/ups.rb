@@ -864,10 +864,15 @@ module ActiveShipping
 
           begin
             service_code = rated_shipment.dig('Service', 'Code')
-            # negotiated_rate     = rated_shipments.dig('NegotiatedRateCharges', 'TotalCharge', 'MonetaryValue')
-            # negotiated_currency = rated_shipments.dig('NegotiatedRateCharges', 'TotalCharge', 'CurrencyCode')
-            total_price     = rated_shipment.dig('TotalCharges', 'MonetaryValue').to_f
-            currency        = rated_shipment.dig('TotalCharges', 'CurrencyCode')
+            if options[:show_negotiated_rates]
+              negotiated_rate     = rated_shipment.dig('NegotiatedRateCharges', 'TotalCharge', 'MonetaryValue')
+              negotiated_currency = rated_shipment.dig('NegotiatedRateCharges', 'TotalCharge', 'CurrencyCode')
+              total_price     = negotiated_rate.blank? ? rated_shipment.dig('TotalCharges', 'MonetaryValue').to_f : negotiated_rate.to_f
+              currency        = negotiated_rate.blank? ? rated_shipment.dig('TotalCharges', 'CurrencyCode') : negotiated_currency
+            else
+              total_price     = rated_shipment.dig('TotalCharges', 'MonetaryValue').to_f
+              currency        = rated_shipment.dig('TotalCharges', 'CurrencyCode')
+            end
             surepost_rate_estimate = ::ActiveShipping::RateEstimate.new(origin, destination, ::ActiveShipping::UPS.name,
                 service_name_for(origin, service_code),
                 total_price: total_price,
@@ -908,10 +913,15 @@ module ActiveShipping
         rate_estimates = rated_shipments.map do |rated_shipment|
           begin
             service_code = rated_shipment.dig('Service', 'Code')
-            # negotiated_rate     = rated_shipments.dig('NegotiatedRateCharges', 'TotalCharge', 'MonetaryValue')
-            # negotiated_currency = rated_shipments.dig('NegotiatedRateCharges', 'TotalCharge', 'CurrencyCode')
-            total_price     = rated_shipment.dig('TotalCharges', 'MonetaryValue').to_f
-            currency        = rated_shipment.dig('TotalCharges', 'CurrencyCode')
+            if options[:show_negotiated_rates]
+              negotiated_rate     = rated_shipment.dig('NegotiatedRateCharges', 'TotalCharge', 'MonetaryValue')
+              negotiated_currency = rated_shipment.dig('NegotiatedRateCharges', 'TotalCharge', 'CurrencyCode')
+              total_price     = negotiated_rate.blank? ? rated_shipment.dig('TotalCharges', 'MonetaryValue').to_f : negotiated_rate.to_f
+              currency        = negotiated_rate.blank? ? rated_shipment.dig('TotalCharges', 'CurrencyCode') : negotiated_currency
+            else
+              total_price     = rated_shipment.dig('TotalCharges', 'MonetaryValue').to_f
+              currency        = rated_shipment.dig('TotalCharges', 'CurrencyCode')
+            end
             ::ActiveShipping::RateEstimate.new(origin, destination, ::ActiveShipping::UPS.name,
                 service_name_for(origin, service_code),
                 total_price: total_price,
