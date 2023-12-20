@@ -974,22 +974,16 @@ module ActiveShipping
       item_total = package.options[:item_total]
 
       if item_total <= 200.00
-        t = total_price
+        total_price
       elsif item_total <= 1000.00
-        t = total_price * 1.05
+        (total_price * 1.05).round(2)
       elsif item_total <= 2000.00
-        t = total_price * 1.10
+        (total_price * 1.10).round(2)
       elsif item_total <= 3000.00
-        t = total_price * 1.15
+        (total_price * 1.15).round(2)
       else
-        t = total_price * 1.20
+        (total_price * 1.20).round(2)
       end
-
-      t = t.round(2)
-      
-      byebug
-
-      return t
     end
 
     def find_time_in_transit(origin, destination, packages, options={})
