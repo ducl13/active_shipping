@@ -170,7 +170,7 @@ module ActiveShipping
         surepost_rate_request = build_rate_request(origin, destination, packages, surepost_options)
         surepost_response = commit(:rate, surepost_rate_request, (options[:test] || false))
       else
-        surepost_response = surepost_options =nil
+        surepost_response = surepost_options = nil
       end
 
       # Requests all rates using requestoption = Shop (Does not return SurePost)
@@ -873,6 +873,10 @@ module ActiveShipping
               total_price     = rated_shipment.dig('TotalCharges', 'MonetaryValue').to_f
               currency        = rated_shipment.dig('TotalCharges', 'CurrencyCode')
             end
+
+            # Add surcharge
+            total_price = add_surcharge(packages, total_price)
+
             surepost_rate_estimate = ::ActiveShipping::RateEstimate.new(origin, destination, ::ActiveShipping::UPS.name,
                 service_name_for(origin, service_code),
                 total_price: total_price,
@@ -922,6 +926,10 @@ module ActiveShipping
               total_price     = rated_shipment.dig('TotalCharges', 'MonetaryValue').to_f
               currency        = rated_shipment.dig('TotalCharges', 'CurrencyCode')
             end
+
+            # Add surcharge
+            total_price = add_surcharge(packages, total_price)
+            
             ::ActiveShipping::RateEstimate.new(origin, destination, ::ActiveShipping::UPS.name,
                 service_name_for(origin, service_code),
                 total_price: total_price,
@@ -954,6 +962,34 @@ module ActiveShipping
 
       # [TODO: DTL - Surepost response is not returned below]
       ::ActiveShipping::RateResponse.new(success, message, parsed_response, rates: rate_estimates, xml: response, request: last_request)
+    end
+
+    # Stepped surcharge
+    #   +5%: $200-$1000
+    #   +10%: $1000.01-$2000
+    #   +15%: $2000.01-$3000
+    #   +20%: $300.01+
+    def add_surcharge(packages, total_price)
+      package = packages.first
+      item_total = package.options[:item_total]
+
+      if item_total <= 200.00
+        t = total_price
+      elsif item_total <= 1000.00
+        t = total_price * 1.05
+      elsif item_total <= 2000.00
+        t = total_price * 1.10
+      elsif item_total <= 3000.00
+        t = total_price * 1.15
+      else
+        t = total_price * 1.20
+      end
+
+      t = t.round(2)
+      
+      byebug
+
+      return t
     end
 
     def find_time_in_transit(origin, destination, packages, options={})
