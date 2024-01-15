@@ -867,15 +867,13 @@ module ActiveShipping
             if options[:show_negotiated_rates]
               negotiated_rate     = rated_shipment.dig('NegotiatedRateCharges', 'TotalCharge', 'MonetaryValue')
               negotiated_currency = rated_shipment.dig('NegotiatedRateCharges', 'TotalCharge', 'CurrencyCode')
-              total_price     = negotiated_rate.blank? ? rated_shipment.dig('TotalCharges', 'MonetaryValue').to_f : negotiated_rate.to_f
+              total_charges       = rated_shipment.dig('TotalCharges', 'MonetaryValue')
+              total_price     = negotiated_rate_plus_surcharge_or_total_charges(packages, negotiated_rate, total_charges)
               currency        = negotiated_rate.blank? ? rated_shipment.dig('TotalCharges', 'CurrencyCode') : negotiated_currency
             else
               total_price     = rated_shipment.dig('TotalCharges', 'MonetaryValue').to_f
               currency        = rated_shipment.dig('TotalCharges', 'CurrencyCode')
             end
-
-            # Add surcharge
-            total_price = add_surcharge(packages, total_price)
 
             surepost_rate_estimate = ::ActiveShipping::RateEstimate.new(origin, destination, ::ActiveShipping::UPS.name,
                 service_name_for(origin, service_code),
@@ -920,15 +918,13 @@ module ActiveShipping
             if options[:show_negotiated_rates]
               negotiated_rate     = rated_shipment.dig('NegotiatedRateCharges', 'TotalCharge', 'MonetaryValue')
               negotiated_currency = rated_shipment.dig('NegotiatedRateCharges', 'TotalCharge', 'CurrencyCode')
-              total_price     = negotiated_rate.blank? ? rated_shipment.dig('TotalCharges', 'MonetaryValue').to_f : negotiated_rate.to_f
+              total_charges       = rated_shipment.dig('TotalCharges', 'MonetaryValue')
+              total_price     = negotiated_rate_plus_surcharge_or_total_charges(packages, negotiated_rate, total_charges)
               currency        = negotiated_rate.blank? ? rated_shipment.dig('TotalCharges', 'CurrencyCode') : negotiated_currency
             else
               total_price     = rated_shipment.dig('TotalCharges', 'MonetaryValue').to_f
               currency        = rated_shipment.dig('TotalCharges', 'CurrencyCode')
             end
-
-            # Add surcharge
-            total_price = add_surcharge(packages, total_price)
             
             ::ActiveShipping::RateEstimate.new(origin, destination, ::ActiveShipping::UPS.name,
                 service_name_for(origin, service_code),
@@ -964,25 +960,19 @@ module ActiveShipping
       ::ActiveShipping::RateResponse.new(success, message, parsed_response, rates: rate_estimates, xml: response, request: last_request)
     end
 
-    # Stepped surcharge
-    #   +5%: $200-$1000
-    #   +10%: $1000.01-$2000
-    #   +15%: $2000.01-$3000
-    #   +20%: $300.01+
-    def add_surcharge(packages, total_price)
+    # Negotiate rate if <= $500
+    # Surcharge
+    #  $200-$500: +10%
+    def negotiated_rate_plus_surcharge_or_total_charges(packages, negotiated_rate, total_charges)
       package = packages.first
       item_total = package.options[:item_total]
-
-      if item_total <= 200.00
-        total_price
-      elsif item_total <= 1000.00
-        (total_price * 1.05).round(2)
-      elsif item_total <= 2000.00
-        (total_price * 1.10).round(2)
-      elsif item_total <= 3000.00
-        (total_price * 1.15).round(2)
+      
+      if !negotiated_rate.blank? && item_total <= 200.00
+        negotiated_rate.to_f
+      elsif !negotiated_rate.blank? && item_total <= 500.00
+        (negotiated_rate.to_f * 1.10).round(2)
       else
-        (total_price * 1.20).round(2)
+        total_charges.to_f
       end
     end
 
