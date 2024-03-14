@@ -1334,6 +1334,11 @@ module ActiveShipping
     def commit(action, request, test = false)
       response = ssl_post("#{test ? TEST_URL : LIVE_URL}/#{RESOURCES[action]}", request, headers)
       response.encode('utf-8', 'iso-8859-1')
+    rescue ActiveUtils::ResponseError, ActiveShipping::ResponseError => e
+      data          = JSON.parse(e.response.body)
+      error_message = data['error'] && data['error']['errorMessage'] ? data['error']['errorMessage'] : 'unknown'
+
+      RateResponse.new(false, error_message, data)
     end
 
     def headers
