@@ -972,7 +972,7 @@ module ActiveShipping
       elsif !negotiated_rate.blank? && item_total <= 500.00
         (negotiated_rate.to_f * 1.10).round(2)
       else
-        total_charges.to_f
+        (negotiated_rate.to_f + (total_charges.to_f - negotiated_rate.to_f) * 0.75).round(2)
       end
     end
 
