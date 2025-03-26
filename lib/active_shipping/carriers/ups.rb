@@ -968,9 +968,9 @@ module ActiveShipping
       item_total = package.options[:item_total]
       
       if !negotiated_rate.blank? && item_total <= 200.00
-        negotiated_rate.to_f
+        negotiated_rate.to_f / 2.0
       elsif !negotiated_rate.blank? && item_total <= 500.00
-        (negotiated_rate.to_f * 1.10).round(2)
+        (negotiated_rate.to_f * 1.10 / 2.0).round(2)
       else
         (negotiated_rate.to_f + (total_charges.to_f - negotiated_rate.to_f) * 0.75).round(2)
       end
